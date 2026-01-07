@@ -5,25 +5,37 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 import platform
+import matplotlib.font_manager as fm
 
 # ==============================================================================
-# 1. 🎨 页面基本设置与字体
+# 1. 🎨 页面基本设置与字体修复
 # ==============================================================================
 st.set_page_config(page_title="企业套保资金风控系统", layout="wide", page_icon="📈")
 
 # 设置绘图风格
 plt.style.use('seaborn-v0_8-whitegrid')
 
-# 解决中文乱码 (兼容性处理)
-system_name = platform.system()
-if system_name == "Windows":
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial']
-elif system_name == "Darwin":
-    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'PingFang SC']
-else:
-    # Linux/Cloud 环境通常需要字体支持，这里作为回退
-    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'DejaVu Sans']
-plt.rcParams['axes.unicode_minus'] = False
+# 解决中文乱码逻辑
+def set_matplot_zh_font():
+    # 1. 设置中文字体候选名单
+    # 'WenQuanYi Micro Hei' 是 Linux (Streamlit Cloud) 安装了 packages.txt 后的标准字体
+    # 'SimHei' 是 Windows 常用黑体
+    # 'Arial Unicode MS' 是 Mac 常用中文字体
+    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
+    
+    # 2. 解决负号 '-' 显示为方块的问题
+    plt.rcParams['axes.unicode_minus'] = False
+
+    # 3. 针对 Streamlit Cloud 的强制刷新 (可选)
+    try:
+        # 如果系统中确实安装了文泉驿微米黑，强制设置
+        zh_font = fm.FontProperties(fname='/usr/share/fonts/truetype/wqy/wqy-microhei.ttc')
+        if zh_font:
+            plt.rcParams['font.family'] = zh_font.get_name()
+    except:
+        pass
+
+set_matplot_zh_font()
 
 # ==============================================================================
 # 2. 🎛️ 侧边栏：参数控制中心
@@ -50,17 +62,15 @@ holding_days = st.sidebar.slider("库存周转/持仓周期 (天)", 7, 90, 30)
 
 
 # ==============================================================================
-# 3. 🧠 核心计算逻辑 (缓存加速)
+# 3. 🧠 核心计算逻辑
 # ==============================================================================
 @st.cache_data
 def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
-    # 读取数据
     try:
         df = pd.read_csv(file, encoding='gbk')
     except:
         df = pd.read_csv(file, encoding='utf-8-sig')
 
-    # 清洗列名
     df.columns = [str(c).strip() for c in df.columns]
     cols = df.columns
     col_time = next((c for c in cols if '时间' in c or 'Date' in c), None)
@@ -76,13 +86,11 @@ def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
         df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce')
     df = df.sort_values('Date').reset_index(drop=True)
 
-    # 基础指标
     df['Basis'] = df['Spot'] - df['Futures']
     df['Cycle_PnL_NoHedge'] = df['Spot'].diff(days) * q
     df['Cycle_Futures_PnL'] = -(df['Futures'].diff(days)) * q * ratio
     df['Cycle_PnL_Hedge'] = df['Cycle_PnL_NoHedge'] + df['Cycle_Futures_PnL']
 
-    # 资金流模拟
     equity_list, margin_req_list = [], []
     cash_in_list, cash_out_list = [], []
     risk_degree_list = []
@@ -93,7 +101,6 @@ def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
 
     for i in range(len(df)):
         price = df['Futures'].iloc[i]
-        # 盈亏
         if i > 0:
             daily_pnl = -(price - df['Futures'].iloc[i - 1]) * q * ratio
             current_equity += daily_pnl
@@ -101,7 +108,6 @@ def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
         req_margin = price * q * ratio * m_rate
         margin_req_list.append(req_margin)
 
-        # 阈值
         thresh_low = req_margin * inject_r
         thresh_high = req_margin * withdraw_r
 
@@ -126,7 +132,6 @@ def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
     df['Line_Inject'] = df['Margin_Required'] * inject_r
     df['Line_Withdraw'] = df['Margin_Required'] * withdraw_r
 
-    # 净值计算
     cum_net_cash = pd.Series(cash_out_list).cumsum() - pd.Series(cash_in_list).cumsum()
     base_asset = (df['Spot'].iloc[0] * q) + initial_equity
     curr_asset = (df['Spot'] * q) + df['Account_Equity'] + cum_net_cash
@@ -138,7 +143,7 @@ def process_data(file, q, ratio, m_rate, inject_r, withdraw_r, days):
 
 
 # ==============================================================================
-# 4. 📊 主界面展示逻辑
+# 4. 📊 主界面展示
 # ==============================================================================
 st.title("📊 企业套期保值资金风控看板")
 st.markdown("---")
@@ -150,7 +155,7 @@ if uploaded_file is not None:
     if err:
         st.error(err)
     else:
-        # --- 顶部 KPI 指标 ---
+        # --- KPI ---
         col1, col2, col3, col4 = st.columns(4)
         total_inject = df['Cash_Injection'].sum() / 10000
         total_withdraw = df['Cash_Withdrawal'].sum() / 10000
@@ -161,10 +166,9 @@ if uploaded_file is not None:
         col3.metric("资金净回流", f"{net_flow:.2f} 万", delta=f"{net_flow:.2f} 万")
         col4.metric("最新风险度", f"{df['Risk_Degree'].iloc[-1] * 100:.1f}%")
 
-        # --- 图表区 ---
+        # --- 图表 ---
         tab1, tab2, tab3, tab4 = st.tabs(["📉 价格与基差", "🏦 资金通道监控", "🛡️ 对冲效果对比", "📊 风险分布"])
 
-        # Tab 1: 价格与基差
         with tab1:
             st.subheader("期现价格走势与基差监控")
             fig1, ax1 = plt.subplots(figsize=(10, 5))
@@ -172,109 +176,50 @@ if uploaded_file is not None:
             ax1.plot(df['Date'], df['Futures'] / 10000, color='orange', linestyle='--', label='期货 (左轴)')
             ax1.set_ylabel("价格 (万元)")
             ax1.grid(True, alpha=0.3)
-
             ax1_r = ax1.twinx()
             basis = df['Basis'] / 10000
-            ax1_r.fill_between(df['Date'], basis, 0, color='gray', alpha=0.2, label='基差范围')
-            ax1_r.plot(df['Date'], basis, color='gray', alpha=0.5, linewidth=1)
+            ax1_r.fill_between(df['Date'], basis, 0, color='gray', alpha=0.2, label='基差')
             ax1_r.set_ylabel("基差 (万元)")
-
             lines, labels = ax1.get_legend_handles_labels()
-            lines2, labels2 = ax1_r.get_legend_handles_labels()
-            ax1.legend(lines + lines2, labels + labels2, loc='upper left')
+            ax1.legend(lines, labels, loc='upper left')
             st.pyplot(fig1)
-            st.info("💡 灰色阴影代表基差（现货-期货）。基差走强有利于卖出套保，基差走弱则会产生成本。")
 
-        # Tab 2: 资金通道
         with tab2:
             st.subheader(f"资金安全通道 ({inject_ratio}x ~ {withdraw_ratio}x)")
             fig3, ax3 = plt.subplots(figsize=(10, 5))
-
-            # 数据准备
-            l_inj = df['Line_Inject'] / 10000
-            l_wit = df['Line_Withdraw'] / 10000
-            l_eq = df['Account_Equity'] / 10000
-
-            ax3.fill_between(df['Date'], l_inj, l_wit, color='gray', alpha=0.1, label='安全缓冲区')
-            ax3.plot(df['Date'], l_eq, color='green', linewidth=2, label='账户权益')
-            ax3.plot(df['Date'], l_inj, 'r--', alpha=0.5, label='补金线')
-            ax3.plot(df['Date'], l_wit, 'b--', alpha=0.5, label='提金线')
-
-            # 标记点
-            inj_pts = df[df['Cash_Injection'] > 0]
-            wit_pts = df[df['Cash_Withdrawal'] > 0]
-            if not inj_pts.empty:
-                ax3.scatter(inj_pts['Date'], inj_pts['Account_Equity'] / 10000, c='red', marker='^', s=50, zorder=5)
-            if not wit_pts.empty:
-                ax3.scatter(wit_pts['Date'], wit_pts['Account_Equity'] / 10000, c='blue', marker='v', s=50, zorder=5)
-
+            ax3.fill_between(df['Date'], df['Line_Inject']/10000, df['Line_Withdraw']/10000, color='gray', alpha=0.1, label='安全缓冲区')
+            ax3.plot(df['Date'], df['Account_Equity']/10000, color='green', linewidth=2, label='账户权益')
             ax3.set_ylabel("资金 (万元)")
             ax3.legend(loc='upper left')
             st.pyplot(fig3)
-            st.success("✅ 绿色线条在灰色通道内运行最为健康。红色三角表示补钱操作，蓝色倒三角表示提钱操作。")
 
-        # Tab 3: 对冲效果
         with tab3:
             st.subheader("账面资产价值变动对比")
             fig4, ax4 = plt.subplots(figsize=(10, 5))
-            val_raw = df['Value_Change_NoHedge'] / 10000
-            val_hedge = df['Value_Change_Hedged'] / 10000
-
-            ax4.plot(df['Date'], val_raw, 'r-', alpha=0.3, label='未套保: 库存价值波动')
-            ax4.plot(df['Date'], val_hedge, 'g-', linewidth=2, label='套保后: 综合资产变动')
+            ax4.plot(df['Date'], df['Value_Change_NoHedge']/10000, 'r-', alpha=0.3, label='未套保')
+            ax4.plot(df['Date'], df['Value_Change_Hedged']/10000, 'g-', linewidth=2, label='套保后')
             ax4.axhline(0, color='black', linestyle=':', alpha=0.3)
             ax4.set_ylabel("价值变动 (万元)")
             ax4.legend()
             st.pyplot(fig4)
 
-            std_raw = val_raw.std()
-            std_hedge = val_hedge.std()
-            reduce = (1 - std_hedge / std_raw) * 100 if std_raw != 0 else 0
-            st.caption(f"📊 统计结论: 套保策略将资产波动率降低了 **{reduce:.1f}%**。")
-
-        # Tab 4: 风险分布
         with tab4:
             st.subheader(f"{holding_days}天周期盈亏分布")
             fig2, ax2 = plt.subplots(figsize=(10, 5))
-            sns.kdeplot(df['Cycle_PnL_NoHedge'].dropna() / 10000, fill=True, color='red', alpha=0.3, label='未套保',
-                        ax=ax2)
-            sns.kdeplot(df['Cycle_PnL_Hedge'].dropna() / 10000, fill=True, color='green', alpha=0.5, label='套保后',
-                        ax=ax2)
+            sns.kdeplot(df['Cycle_PnL_NoHedge'].dropna() / 10000, fill=True, color='red', alpha=0.3, label='未套保', ax=ax2)
+            sns.kdeplot(df['Cycle_PnL_Hedge'].dropna() / 10000, fill=True, color='green', alpha=0.5, label='套保后', ax=ax2)
             ax2.set_xlabel("盈亏金额 (万元)")
             ax2.legend()
             st.pyplot(fig2)
-            st.info("💡 绿色山峰越陡峭、越窄，说明风险控制越好（盈亏波动范围小）。")
 
-        # --- 数据下载区域 ---
+        # 报表导出
         st.markdown("---")
-        st.subheader("📥 报表导出")
-
-        # 准备 Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df = df.copy()
-            # 格式化导出数据
-            cols = ['Date', 'Spot', 'Futures', 'Basis', 'Margin_Required', 'Account_Equity', 'Cash_Injection',
-                    'Cash_Withdrawal', 'Value_Change_Hedged']
-            out_df = export_df[cols].copy()
-            for c in cols[4:]: out_df[c] /= 10000
-            out_df.columns = ['日期', '现货', '期货', '基差', '保证金(万)', '权益(万)', '补金(万)', '提金(万)',
-                              '净值变动(万)']
+            out_df = df[['Date', 'Spot', 'Futures', 'Basis', 'Account_Equity', 'Risk_Degree']].copy()
             out_df.to_excel(writer, index=False, sheet_name='运营日报')
-
-        st.download_button(
-            label="📥 下载 Excel 分析日报",
-            data=output.getvalue(),
-            file_name='套保运营日报.xlsx',
-            mime='application/vnd.ms-excel'
-        )
+        st.download_button("📥 下载分析日报", data=output.getvalue(), file_name='套保运营日报.xlsx')
 
 else:
-    st.info("👆 请在左侧侧边栏上传 CSV 文件以开始分析。")
-    st.markdown("""
-    **CSV 格式说明：**
-    必须包含以下列（自动识别）：
-    - `时间` 或 `Date`
-    - `现货`
-    - `期货` 或 `主力合约价格`
-    """)
+    st.info("👆 请上传 CSV 文件。")
+
