@@ -1,2 +1,1 @@
-packages.txt
 fonts-wqy-microhei
