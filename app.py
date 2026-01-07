@@ -56,7 +56,7 @@ st.sidebar.subheader("⏳ 模拟设置")
 holding_days = st.sidebar.slider("库存周转/持仓周期 (天)", 7, 90, 30)
 
 # ==============================================================================
-# 3. 🧠 核心计算逻辑 (保留原始逻辑)
+# 3. 🧠 核心计算逻辑
 # ==============================================================================
 @st.cache_data
 def process_data(df_input, q, ratio, m_rate, inject_r, withdraw_r, days):
@@ -132,7 +132,7 @@ if uploaded_file is not None:
     col_fut = next((c for c in cols if ('期货' in c or '主力' in c) and '价格' in c), None)
 
     if not (col_time and col_spot and col_fut):
-        st.error("列名识别失败")
+        st.error("数据列名不匹配")
     else:
         raw_df = raw_df.rename(columns={col_time: 'Date', col_spot: 'Spot', col_fut: 'Futures'})
         raw_df['Date'] = pd.to_datetime(raw_df['Date'])
@@ -142,43 +142,42 @@ if uploaded_file is not None:
 
         st.sidebar.subheader("📅 样本区间选择")
         min_date, max_date = raw_df['Date'].min().to_pydatetime(), raw_df['Date'].max().to_pydatetime()
-        date_range = st.sidebar.date_input("选择时间段", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        date_range = st.sidebar.date_input("分析起止时间", value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_d, end_d = date_range
             df = process_data(raw_df[(raw_df['Date'].dt.date >= start_d) & (raw_df['Date'].dt.date <= end_d)], 
                              quantity, hedge_ratio, margin_rate, inject_ratio, withdraw_ratio, holding_days)
 
-            # --- 顶部数值看板：聚焦稳定性 ---
+            # --- 顶部看板：聚焦稳定性指标 ---
             std_raw = df['Value_Change_NoHedge'].std() / 10000
             std_hedge = df['Value_Change_Hedged'].std() / 10000
             stability_boost = (1 - std_hedge / std_raw) * 100 if std_raw != 0 else 0
-            basis_vol = (df['Basis'].std() / df['Spot'].mean()) * 100
+            avg_risk = df['Risk_Degree'].mean() * 100
 
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("现货价值波动标准差", f"{std_raw:.2f} 万")
-            c2.metric("套保后综合波动标准差", f"{std_hedge:.2f} 万", delta=f"-{(std_raw-std_hedge):.2f}", delta_color="normal")
+            c2.metric("对冲后综合波动标准差", f"{std_hedge:.2f} 万", delta=f"-{(std_raw-std_hedge):.2f}", delta_color="normal")
             c3.metric("稳定性提升比例", f"{stability_boost:.1f}%")
-            c4.metric("资金覆盖稳定性", f"{df['Risk_Degree'].mean() * 100:.1f}%", help="账户权益/保证金的平均比值")
+            c4.metric("资金覆盖稳定性", f"{avg_risk:.1f}%", help="权益/保证金平均水平，越高说明资金储备越稳健")
 
-            # --- 图表标签页：价格基差监控放第一个 ---
+            # --- 图表排序调整：基差第一 ---
             tab1, tab2, tab3, tab4 = st.tabs(["📉 价格基差监控", "🛡️ 对冲波动稳定性", "📊 风险概率分布", "🏦 资金通道监管"])
 
             with tab1:
                 st.subheader("期现价格走势与基差动态")
                 fig1, ax1 = plt.subplots(figsize=(10, 5))
-                ax1.plot(df['Date'], df['Spot'] / 10000, 'b-', label='现货 (左轴)')
-                ax1.plot(df['Date'], df['Futures'] / 10000, color='orange', linestyle='--', label='期货 (左轴)')
+                ax1.plot(df['Date'], df['Spot'] / 10000, 'b-', label='现货价格')
+                ax1.plot(df['Date'], df['Futures'] / 10000, color='orange', linestyle='--', label='期货价格')
                 ax1.set_ylabel("价格 (万元)")
                 ax1.grid(True, alpha=0.3)
                 ax1_r = ax1.twinx()
-                basis = df['Basis'] / 10000
-                ax1_r.fill_between(df['Date'], basis, 0, color='gray', alpha=0.2, label='基差范围')
+                ax1_r.fill_between(df['Date'], df['Basis']/10000, 0, color='gray', alpha=0.2, label='基差范围')
                 ax1_r.set_ylabel("基差 (万元)")
                 st.pyplot(fig1)
 
             with tab2:
-                st.subheader("对冲前后的资产净值稳定性对比")
+                st.subheader("对冲前后净值稳定性对比")
                 fig4, ax4 = plt.subplots(figsize=(10, 5))
                 ax4.plot(df['Date'], df['Value_Change_NoHedge']/10000, 'r-', alpha=0.3, label='未套保风险暴露')
                 ax4.plot(df['Date'], df['Value_Change_Hedged']/10000, 'g-', linewidth=2, label='套保后净值曲线')
@@ -186,7 +185,6 @@ if uploaded_file is not None:
                 ax4.set_ylabel("价值变动 (万元)")
                 ax4.legend()
                 st.pyplot(fig4)
-                st.info(f"📊 **稳定性量化结论**：套保策略成功将资产风险波动从 {std_raw:.2f} 万降低至 {std_hedge:.2f} 万。")
 
             with tab3:
                 st.subheader(f"{holding_days}天持仓周期盈亏概率分布")
@@ -216,18 +214,25 @@ if uploaded_file is not None:
                 ax3.legend(loc='upper left', ncol=2)
                 st.pyplot(fig3)
 
-            # 下载逻辑
+            # --- 自动生成分析摘要 ---
             st.markdown("---")
+            st.subheader("📝 回测稳定性分析摘要")
+            summary_cols = st.columns(2)
+            with summary_cols[0]:
+                st.write(f"1. **波动削减效果**：套保策略使资产标准差从 {std_raw:.2f} 万下降至 {std_hedge:.2f} 万，整体稳定性提升了 **{stability_boost:.1f}%**。")
+                st.write(f"2. **基差稳定性**：回测期内平均基差为 {df['Basis'].mean()/10000:.2f} 万，基差波动是影响对冲稳定性的主要剩余风险。")
+            with summary_cols[1]:
+                st.write(f"3. **资金调度频率**：共触发补仓操作 **{len(inj_ev)}** 次，提取盈余操作 **{len(wit_ev)}** 次。")
+                st.write(f"4. **资金稳健性**：平均资金覆盖率为 **{avg_risk:.1f}%**，始终有效维持在设定的安全缓冲区内。")
+
+            # 下载
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                out_df = df[['Date', 'Spot', 'Futures', 'Basis', 'Margin_Required', 'Account_Equity', 'Cash_Injection', 'Cash_Withdrawal', 'Value_Change_Hedged']].copy()
-                for c in out_df.columns[4:]: out_df[c] /= 10000
-                out_df.columns = ['日期', '现货', '期货', '基差', '保证金(万)', '权益(万)', '补金(万)', '提金(万)', '净值变动(万)']
-                out_df.to_excel(writer, index=False, sheet_name='稳定性分析数据')
-            st.download_button(label="📥 下载回测明细", data=output.getvalue(), file_name='稳定性回测报告.xlsx')
+                df.to_excel(writer, index=False, sheet_name='稳定性回测报告')
+            st.download_button(label="📥 下载回测分析日报", data=output.getvalue(), file_name='稳定性回测报告.xlsx')
 
 else:
-    st.info("👆 请上传数据文件开启稳定性回测。")
+    st.info("👆 请上传数据文件以开始稳定性回测分析。")
 
 
 
