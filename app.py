@@ -5,7 +5,19 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 import platform
-
+# ==============================================================================
+# 🚀 深度定制界面：隐藏 Streamlit 官方多余组件
+# ==============================================================================
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}       /* 隐藏右上角菜单 */
+            footer {visibility: hidden;}          /* 隐藏底部 Made with Streamlit */
+            header {visibility: hidden;}          /* 隐藏顶部蓝色横条 */
+            .viewerBadge_container__1QSob {display: none;} /* 隐藏右下角部署标志 */
+            #stDecoration {display:none;}         /* 隐藏装饰线 */
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 # ==============================================================================
 # 1. 🎨 页面基本设置与字体 (针对 GitHub 部署优化)
 # ==============================================================================
@@ -238,4 +250,5 @@ if uploaded_file is not None:
 
 else:
     st.info("👆 请在左侧侧边栏上传 CSV 文件以开始分析。")
+
 
