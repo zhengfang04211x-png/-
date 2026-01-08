@@ -6,6 +6,7 @@ import plotly.express as px
 from scipy import stats
 import io
 import platform
+from plotly.subplots import make_subplots
 
 # ==============================================================================
 # 🚀 界面定制 (全量保留自 app (2).py)
@@ -95,40 +96,8 @@ def process_data(df_input, q, ratio, m_rate, inject_r, withdraw_r, days):
     df['Value_Change_Hedged'] = curr_asset - base_asset
     return df
 
-def create_kde_trace(data, name, color):
-    """创建KDE密度图轨迹"""
-    # 去除NaN值
-    clean_data = data.dropna()
-    
-    if len(clean_data) < 2:
-        return None
-    
-    # 计算KDE
-    kde = stats.gaussian_kde(clean_data)
-    x_range = np.linspace(clean_data.min() * 1.1, clean_data.max() * 1.1, 500)
-    y_kde = kde(x_range)
-    
-    # 计算统计指标
-    mean_val = clean_data.mean()
-    median_val = clean_data.median()
-    std_val = clean_data.std()
-    
-    # 创建KDE曲线
-    trace = go.Scatter(
-        x=x_range,
-        y=y_kde,
-        mode='lines',
-        name=name,
-        line=dict(color=color, width=2),
-        fill='tozeroy',
-        fillcolor=f'rgba({color[4:-1]}, 0.2)' if color.startswith('rgb') else f'rgba{tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2, 4)) + (0.2,)}',
-        hovertemplate=f'<b>{name}</b><br>金额: %{{x:,.0f}}元<br>概率密度: %{{y:.4f}}<extra></extra>'
-    )
-    
-    return trace, mean_val, median_val, std_val
-
 # ==============================================================================
-# 4. 📊 展示逻辑 (优化版)
+# 4. 📊 展示逻辑 (优化版 - 美观设计)
 # ==============================================================================
 if uploaded_file:
     try:
@@ -155,6 +124,10 @@ if uploaded_file:
             df = process_data(raw_df[(raw_df['Date'].dt.date >= date_range[0]) & (raw_df['Date'].dt.date <= date_range[1])], 
                              quantity, hedge_ratio, margin_rate, inject_ratio, withdraw_ratio, holding_days)
 
+            # 提取补金和提盈事件
+            inj_events = df[df['Cash_Injection'] > 0]
+            wit_events = df[df['Cash_Withdrawal'] > 0]
+            
             # --- 原版 Metric 数值计算 ---
             std_raw = df['Value_Change_NoHedge'].std() / 10000
             std_hedge = df['Value_Change_Hedged'].std() / 10000
@@ -163,213 +136,180 @@ if uploaded_file:
             max_loss_hedge = df['Value_Change_Hedged'].min() / 10000
             loss_saved = max_loss_hedge - max_loss_no 
 
+            # 使用卡片式布局展示指标
+            st.markdown("""
+            <style>
+            .metric-card {
+                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 10px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("现货波动风险 (标准差)", f"{std_raw:.2f} 万")
-            c2.metric("套保后剩余波动", f"{std_hedge:.2f} 万", delta=f"降低 {stability_boost:.1f}%", delta_color="normal")
-            c3.metric("累计调仓净额", f"{(df['Cash_Withdrawal'].sum() - df['Cash_Injection'].sum())/10000:.2f} 万")
-            c4.metric("最大亏损修复额", f"{loss_saved:.2f} 万")
+            with c1:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("现货波动风险 (标准差)", f"{std_raw:.2f} 万")
+                st.markdown('</div>', unsafe_allow_html=True)
+            with c2:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("套保后剩余波动", f"{std_hedge:.2f} 万", delta=f"降低 {stability_boost:.1f}%", delta_color="inverse")
+                st.markdown('</div>', unsafe_allow_html=True)
+            with c3:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("累计调仓净额", f"{(df['Cash_Withdrawal'].sum() - df['Cash_Injection'].sum())/10000:.2f} 万")
+                st.markdown('</div>', unsafe_allow_html=True)
+            with c4:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("最大亏损修复额", f"{loss_saved:.2f} 万", delta_color="normal")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-            # --- 原版标签页 Tab 顺序 ---
+            # --- 标签页设计 ---
             t1, t2, t3, t4 = st.tabs(["📉 价格基差监控", "🛡️ 对冲波动稳定性", "📊 风险概率分布", "🏦 资金通道监管"])
 
             with t1:
-                # 价格基差监控 - Plotly 版
+                # 价格基差监控 - 现代设计
                 fig1 = go.Figure()
-                fig1.add_trace(go.Scatter(x=df['Date'], y=df['Spot']/10000, name='现货', line=dict(color='blue')))
-                fig1.add_trace(go.Scatter(x=df['Date'], y=df['Futures']/10000, name='期货', line=dict(color='orange', dash='dash')))
-                fig1.add_trace(go.Scatter(x=df['Date'], y=df['Basis']/10000, name='基差', fill='tozeroy', yaxis='y2', line=dict(width=0), opacity=0.2, fillcolor='gray'))
-                fig1.update_layout(hovermode="x unified", height=400, margin=dict(t=20, b=20),
-                                 yaxis=dict(title="价格 (万)"), yaxis2=dict(overlaying='y', side='right', showgrid=False))
+                
+                # 添加现货价格区域
+                fig1.add_trace(go.Scatter(
+                    x=df['Date'], y=df['Spot']/10000, 
+                    name='现货价格', 
+                    line=dict(color='#2E86AB', width=3),
+                    fill=None,
+                    hovertemplate='<b>现货价格</b><br>时间: %{x}<br>价格: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 添加期货价格线
+                fig1.add_trace(go.Scatter(
+                    x=df['Date'], y=df['Futures']/10000, 
+                    name='期货价格', 
+                    line=dict(color='#F24236', width=3, dash='dash'),
+                    hovertemplate='<b>期货价格</b><br>时间: %{x}<br>价格: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 添加基差区域（使用副坐标轴）
+                fig1.add_trace(go.Scatter(
+                    x=df['Date'], y=df['Basis']/10000, 
+                    name='基差', 
+                    fill='tozeroy',
+                    fillcolor='rgba(169, 169, 169, 0.2)',
+                    line=dict(color='rgba(169, 169, 169, 0.5)', width=1),
+                    yaxis='y2',
+                    hovertemplate='<b>基差</b><br>时间: %{x}<br>基差: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 计算基差平均线
+                mean_basis = df['Basis'].mean() / 10000
+                fig1.add_hline(y=mean_basis, line_dash="dot", 
+                             line_color="gray", opacity=0.5,
+                             annotation_text=f"平均基差: {mean_basis:.2f}万",
+                             annotation_position="bottom right")
+                
+                fig1.update_layout(
+                    title="价格与基差走势监控",
+                    template="plotly_white",
+                    height=500,
+                    hovermode="x unified",
+                    margin=dict(t=50, b=50, l=50, r=50),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    xaxis=dict(
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(128, 128, 128, 0.1)',
+                        title="时间"
+                    ),
+                    yaxis=dict(
+                        title="价格 (万元)",
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(128, 128, 128, 0.1)'
+                    ),
+                    yaxis2=dict(
+                        title="基差 (万元)",
+                        overlaying='y',
+                        side='right',
+                        showgrid=False
+                    ),
+                    plot_bgcolor='white',
+                    paper_bgcolor='white'
+                )
+                
                 st.plotly_chart(fig1, use_container_width=True)
 
             with t2:
-                # 对冲波动稳定性 - Plotly 版
-                fig2 = go.Figure()
-                fig2.add_trace(go.Scatter(x=df['Date'], y=df['Value_Change_NoHedge']/10000, name='裸奔风险', line=dict(color='red', width=1), opacity=0.3))
-                fig2.add_trace(go.Scatter(x=df['Date'], y=df['Value_Change_Hedged']/10000, name='对冲后稳态', line=dict(color='green', width=2)))
-                fig2.update_layout(hovermode="x unified", height=400, margin=dict(t=20, b=20), yaxis=dict(title="价值变动 (万)"))
-                st.plotly_chart(fig2, use_container_width=True)
-
-            with t3:
-                # 风险概率分布 - 改为KDE密度图 + 统计标记
-                fig3 = go.Figure()
-                
-                # 创建KDE密度图
-                kde_nohedge = create_kde_trace(df['Cycle_PnL_NoHedge'], '未套保', 'rgb(255, 0, 0)')
-                kde_hedge = create_kde_trace(df['Cycle_PnL_Hedge'], '套保后', 'rgb(0, 128, 0)')
-                
-                if kde_nohedge and kde_hedge:
-                    trace_nohedge, mean_nohedge, median_nohedge, std_nohedge = kde_nohedge
-                    trace_hedge, mean_hedge, median_hedge, std_hedge = kde_hedge
-                    
-                    fig3.add_trace(trace_nohedge)
-                    fig3.add_trace(trace_hedge)
-                    
-                    # 添加均值线标记
-                    fig3.add_vline(x=mean_nohedge, line=dict(color='red', width=1, dash='dash'), 
-                                 annotation_text=f"均值: {mean_nohedge/10000:.1f}万", 
-                                 annotation_position="top right")
-                    fig3.add_vline(x=mean_hedge, line=dict(color='green', width=1, dash='dash'), 
-                                 annotation_text=f"均值: {mean_hedge/10000:.1f}万", 
-                                 annotation_position="top left")
-                    
-                    # 添加标准差区域
-                    fig3.add_vrect(x0=mean_nohedge-std_nohedge, x1=mean_nohedge+std_nohedge,
-                                 fillcolor="red", opacity=0.1, line_width=0,
-                                 annotation_text=f"未套保±1σ", annotation_position="top")
-                    fig3.add_vrect(x0=mean_hedge-std_hedge, x1=mean_hedge+std_hedge,
-                                 fillcolor="green", opacity=0.1, line_width=0,
-                                 annotation_text=f"套保后±1σ", annotation_position="bottom")
-                    
-                    # 添加0线标记
-                    fig3.add_vline(x=0, line=dict(color='black', width=1, dash='dot'),
-                                 annotation_text="盈亏平衡点")
-                    
-                    # 添加统计摘要
-                    fig3.add_annotation(
-                        x=0.02, y=0.98,
-                        xref="paper", yref="paper",
-                        text=f"<b>统计摘要:</b><br>未套保: μ={mean_nohedge/10000:.1f}万, σ={std_nohedge/10000:.1f}万<br>套保后: μ={mean_hedge/10000:.1f}万, σ={std_hedge/10000:.1f}万<br>波动降低: {(1-std_hedge/std_nohedge)*100:.1f}%",
-                        showarrow=False,
-                        align="left",
-                        bordercolor="black",
-                        borderwidth=1,
-                        borderpad=4,
-                        bgcolor="white",
-                        opacity=0.8
-                    )
-                
-                fig3.update_layout(
-                    title="风险概率密度分布 (KDE)",
-                    xaxis_title="盈亏金额 (元)",
-                    yaxis_title="概率密度",
-                    height=500,
-                    hovermode="x",
-                    showlegend=True,
-                    legend=dict(
-                        yanchor="top",
-                        y=0.99,
-                        xanchor="left",
-                        x=0.01
-                    )
+                # 对冲波动稳定性 - 现代设计
+                fig2 = make_subplots(
+                    rows=2, cols=1,
+                    row_heights=[0.7, 0.3],
+                    vertical_spacing=0.1,
+                    subplot_titles=("套保前后价值变动对比", "套保效果差值"),
+                    shared_xaxes=True
                 )
-                st.plotly_chart(fig3, use_container_width=True)
                 
-                # 添加分布特征说明
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("未套保波动率", f"{df['Cycle_PnL_NoHedge'].std()/10000:.2f}万")
-                with col2:
-                    st.metric("套保后波动率", f"{df['Cycle_PnL_Hedge'].std()/10000:.2f}万", 
-                             delta=f"降低{(1-df['Cycle_PnL_Hedge'].std()/df['Cycle_PnL_NoHedge'].std())*100:.1f}%")
-                with col3:
-                    st.metric("极端风险降低", f"{(df['Cycle_PnL_NoHedge'].quantile(0.05)-df['Cycle_PnL_Hedge'].quantile(0.05))/10000:.2f}万")
-
-            with t4:
-                # 资金通道监管 - 优化版
-                fig4 = go.Figure()
+                # 主要图表：价值变动
+                fig2.add_trace(go.Scatter(
+                    x=df['Date'], y=df['Value_Change_NoHedge']/10000, 
+                    name='未套保',
+                    line=dict(color='#FF6B6B', width=2, dash='dash'),
+                    opacity=0.6,
+                    hovertemplate='<b>未套保</b><br>时间: %{x}<br>价值变动: %{y:.2f}万<extra></extra>'
+                ), row=1, col=1)
                 
-                # 背景区域
-                fig4.add_trace(go.Scatter(
-                    x=df['Date'], 
-                    y=df['Line_Withdraw']/10000, 
-                    name='提盈线', 
-                    line=dict(color='gray', dash='dot'), 
-                    opacity=0.3
-                ))
-                fig4.add_trace(go.Scatter(
-                    x=df['Date'], 
-                    y=df['Line_Inject']/10000, 
-                    name='补金线', 
-                    line=dict(color='gray', dash='dot'), 
-                    fill='tonexty', 
-                    fillcolor='rgba(255, 165, 0, 0.1)',
-                    opacity=0.3
-                ))
+                fig2.add_trace(go.Scatter(
+                    x=df['Date'], y=df['Value_Change_Hedged']/10000, 
+                    name='套保后',
+                    line=dict(color='#4ECDC4', width=3),
+                    hovertemplate='<b>套保后</b><br>时间: %{x}<br>价值变动: %{y:.2f}万<extra></extra>'
+                ), row=1, col=1)
                 
-                # 账户权益主线
-                fig4.add_trace(go.Scatter(
+                # 添加填充区域显示套保效果
+                fig2.add_trace(go.Scatter(
                     x=df['Date'], 
-                    y=df['Account_Equity']/10000, 
-                    name='账户权益', 
-                    line=dict(color='black', width=2),
+                    y=df['Value_Change_Hedged']/10000,
+                    mode='lines',
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ), row=1, col=1)
+                
+                fig2.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Value_Change_NoHedge']/10000,
+                    mode='lines',
+                    line=dict(width=0),
                     fill='tonexty',
-                    fillcolor='rgba(0, 100, 255, 0.1)'
-                ))
+                    fillcolor='rgba(255, 107, 107, 0.2)',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ), row=1, col=1)
                 
-                # 保证金要求线
-                fig4.add_trace(go.Scatter(
-                    x=df['Date'], 
-                    y=df['Margin_Required']/10000, 
-                    name='保证金要求', 
-                    line=dict(color='purple', width=1, dash='dash'),
-                    opacity=0.7
-                ))
+                # 底部图表：套保效果（差值）
+                hedge_benefit = (df['Value_Change_Hedged'] - df['Value_Change_NoHedge'])/10000
+                fig2.add_trace(go.Bar(
+                    x=df['Date'], y=hedge_benefit,
+                    name='套保效果',
+                    marker_color=['#4ECDC4' if x > 0 else '#FF6B6B' for x in hedge_benefit],
+                    opacity=0.7,
+                    hovertemplate='<b>套保效果</b><br>时间: %{x}<br>效益: %{y:.2f}万<extra></extra>'
+                ), row=2, col=1)
                 
-                # 提取补金和提盈事件
-                inj_events = df[df['Cash_Injection'] > 0]
-                wit_events = df[df['Cash_Withdrawal'] > 0]
+                # 添加零线
+                fig2.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.5, row=2, col=1)
                 
-                # 补金点 - 使用红色三角形
-                if not inj_events.empty:
-                    fig4.add_trace(go.Scatter(
-                        x=inj_events['Date'], 
-                        y=inj_events['Account_Equity']/10000,
-                        mode='markers+text',
-                        name='补金点',
-                        marker=dict(
-                            color='red',
-                            symbol='triangle-up',
-                            size=15,
-                            line=dict(color='darkred', width=2)
-                        ),
-                        text=[f"+{amt/10000:.1f}万" for amt in inj_events['Cash_Injection']],
-                        textposition="top center",
-                        textfont=dict(color='red', size=10),
-                        hovertemplate='<b>补金事件</b><br>时间: %{x}<br>权益: %{y:.1f}万<br>补金金额: %{text}<extra></extra>'
-                    ))
-                
-                # 提盈点 - 使用绿色三角形
-                if not wit_events.empty:
-                    fig4.add_trace(go.Scatter(
-                        x=wit_events['Date'], 
-                        y=wit_events['Account_Equity']/10000,
-                        mode='markers+text',
-                        name='提盈点',
-                        marker=dict(
-                            color='green',
-                            symbol='triangle-down',
-                            size=15,
-                            line=dict(color='darkgreen', width=2)
-                        ),
-                        text=[f"-{amt/10000:.1f}万" for amt in wit_events['Cash_Withdrawal']],
-                        textposition="bottom center",
-                        textfont=dict(color='green', size=10),
-                        hovertemplate='<b>提盈事件</b><br>时间: %{x}<br>权益: %{y:.1f}万<br>提盈金额: %{text}<extra></extra>'
-                    ))
-                
-                # 添加关键事件统计
-                total_injections = inj_events['Cash_Injection'].sum()/10000
-                total_withdrawals = wit_events['Cash_Withdrawal'].sum()/10000
-                
-                fig4.add_annotation(
-                    x=0.02, y=0.98,
-                    xref="paper", yref="paper",
-                    text=f"<b>资金调度统计:</b><br>补金次数: {len(inj_events)}次<br>提盈次数: {len(wit_events)}次<br>净流出: {(total_withdrawals-total_injections):.1f}万",
-                    showarrow=False,
-                    align="left",
-                    bordercolor="black",
-                    borderwidth=1,
-                    borderpad=4,
-                    bgcolor="white",
-                    opacity=0.8
-                )
-                
-                fig4.update_layout(
-                    title="资金通道监管 - 账户权益与资金调度",
+                fig2.update_layout(
+                    template="plotly_white",
+                    height=600,
                     hovermode="x unified",
-                    height=500,
-                    yaxis=dict(title="金额 (万)"),
                     showlegend=True,
                     legend=dict(
                         orientation="h",
@@ -377,55 +317,376 @@ if uploaded_file:
                         y=1.02,
                         xanchor="right",
                         x=1
-                    )
+                    ),
+                    plot_bgcolor='white',
+                    paper_bgcolor='white'
                 )
+                
+                fig2.update_xaxes(title_text="时间", row=2, col=1)
+                fig2.update_yaxes(title_text="价值变动 (万元)", row=1, col=1)
+                fig2.update_yaxes(title_text="套保效益 (万元)", row=2, col=1)
+                
+                st.plotly_chart(fig2, use_container_width=True)
+
+            with t3:
+                # 风险概率分布 - 美观的KDE密度图
+                fig3 = go.Figure()
+                
+                # 准备数据
+                nohedge_data = df['Cycle_PnL_NoHedge'].dropna()
+                hedge_data = df['Cycle_PnL_Hedge'].dropna()
+                
+                if len(nohedge_data) > 1 and len(hedge_data) > 1:
+                    # 创建KDE曲线
+                    kde_nohedge = stats.gaussian_kde(nohedge_data)
+                    kde_hedge = stats.gaussian_kde(hedge_data)
+                    
+                    # 创建X轴范围
+                    x_min = min(nohedge_data.min(), hedge_data.min()) * 1.1
+                    x_max = max(nohedge_data.max(), hedge_data.max()) * 1.1
+                    x_range = np.linspace(x_min, x_max, 500)
+                    
+                    # 添加未套保KDE曲线
+                    fig3.add_trace(go.Scatter(
+                        x=x_range/10000, 
+                        y=kde_nohedge(x_range),
+                        name='未套保分布',
+                        line=dict(color='#FF6B6B', width=3),
+                        fill='tozeroy',
+                        fillcolor='rgba(255, 107, 107, 0.3)',
+                        hovertemplate='<b>未套保</b><br>盈亏: %{x:.2f}万<br>概率密度: %{y:.4f}<extra></extra>'
+                    ))
+                    
+                    # 添加套保后KDE曲线
+                    fig3.add_trace(go.Scatter(
+                        x=x_range/10000, 
+                        y=kde_hedge(x_range),
+                        name='套保后分布',
+                        line=dict(color='#4ECDC4', width=3),
+                        fill='tozeroy',
+                        fillcolor='rgba(78, 205, 196, 0.3)',
+                        hovertemplate='<b>套保后</b><br>盈亏: %{x:.2f}万<br>概率密度: %{y:.4f}<extra></extra>'
+                    ))
+                    
+                    # 计算统计指标
+                    stats_nohedge = {
+                        'mean': nohedge_data.mean()/10000,
+                        'std': nohedge_data.std()/10000,
+                        'median': nohedge_data.median()/10000,
+                        'q5': np.percentile(nohedge_data, 5)/10000,
+                        'q95': np.percentile(nohedge_data, 95)/10000
+                    }
+                    
+                    stats_hedge = {
+                        'mean': hedge_data.mean()/10000,
+                        'std': hedge_data.std()/10000,
+                        'median': hedge_data.median()/10000,
+                        'q5': np.percentile(hedge_data, 5)/10000,
+                        'q95': np.percentile(hedge_data, 95)/10000
+                    }
+                    
+                    # 添加统计标记
+                    colors = {'nohedge': '#FF6B6B', 'hedge': '#4ECDC4'}
+                    
+                    # 添加均值线
+                    fig3.add_vline(x=stats_nohedge['mean'], line_dash="dash", 
+                                 line_color=colors['nohedge'], opacity=0.8,
+                                 annotation_text=f"未套保均值: {stats_nohedge['mean']:.2f}万",
+                                 annotation_position="top right")
+                    
+                    fig3.add_vline(x=stats_hedge['mean'], line_dash="dash", 
+                                 line_color=colors['hedge'], opacity=0.8,
+                                 annotation_text=f"套保后均值: {stats_hedge['mean']:.2f}万",
+                                 annotation_position="top left")
+                    
+                    # 添加分位数标记
+                    fig3.add_vrect(x0=stats_nohedge['q5'], x1=stats_nohedge['q95'],
+                                 fillcolor=colors['nohedge'], opacity=0.1, line_width=0,
+                                 annotation_text="未套保90%区间", annotation_position="top")
+                    
+                    fig3.add_vrect(x0=stats_hedge['q5'], x1=stats_hedge['q95'],
+                                 fillcolor=colors['hedge'], opacity=0.1, line_width=0,
+                                 annotation_text="套保后90%区间", annotation_position="bottom")
+                    
+                    # 添加盈亏平衡线
+                    fig3.add_vline(x=0, line_dash="dot", line_color="gray", opacity=0.7,
+                                 annotation_text="盈亏平衡点", annotation_position="bottom")
+                    
+                    # 添加统计摘要框
+                    fig3.add_annotation(
+                        x=0.02, y=0.98,
+                        xref="paper", yref="paper",
+                        text=(
+                            f"<b>统计摘要</b><br>"
+                            f"<span style='color:{colors['nohedge']}'>未套保:</span> "
+                            f"μ={stats_nohedge['mean']:.2f}万, σ={stats_nohedge['std']:.2f}万<br>"
+                            f"<span style='color:{colors['hedge']}'>套保后:</span> "
+                            f"μ={stats_hedge['mean']:.2f}万, σ={stats_hedge['std']:.2f}万<br>"
+                            f"波动降低: <b>{(1-stats_hedge['std']/stats_nohedge['std'])*100:.1f}%</b>"
+                        ),
+                        showarrow=False,
+                        align="left",
+                        bordercolor="black",
+                        borderwidth=1,
+                        borderpad=4,
+                        bgcolor="white",
+                        opacity=0.9,
+                        font=dict(size=11)
+                    )
+                
+                fig3.update_layout(
+                    title="风险概率密度分布 (KDE)",
+                    template="plotly_white",
+                    height=500,
+                    xaxis_title="盈亏金额 (万元)",
+                    yaxis_title="概率密度",
+                    hovermode="x",
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    plot_bgcolor='white',
+                    paper_bgcolor='white',
+                    margin=dict(t=50, b=50, l=50, r=50)
+                )
+                
+                st.plotly_chart(fig3, use_container_width=True)
+
+            with t4:
+                # 资金通道监管 - 现代设计
+                fig4 = go.Figure()
+                
+                # 添加区域背景
+                fig4.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Line_Withdraw']/10000, 
+                    name='提盈警戒线', 
+                    line=dict(color='rgba(76, 175, 80, 0.5)', width=2, dash='dash'),
+                    hovertemplate='<b>提盈线</b><br>时间: %{x}<br>金额: %{y:.2f}万<extra></extra>'
+                ))
+                
+                fig4.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Line_Inject']/10000, 
+                    name='补金警戒线', 
+                    line=dict(color='rgba(244, 67, 54, 0.5)', width=2, dash='dash'),
+                    fill='tonexty',
+                    fillcolor='rgba(255, 235, 59, 0.2)',
+                    hovertemplate='<b>补金线</b><br>时间: %{x}<br>金额: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 添加账户权益线
+                fig4.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Account_Equity']/10000, 
+                    name='账户权益', 
+                    line=dict(color='#2E86AB', width=4),
+                    hovertemplate='<b>账户权益</b><br>时间: %{x}<br>权益: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 添加保证金要求线
+                fig4.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Margin_Required']/10000, 
+                    name='保证金要求', 
+                    line=dict(color='#F24236', width=2, dash='dot'),
+                    opacity=0.7,
+                    hovertemplate='<b>保证金要求</b><br>时间: %{x}<br>金额: %{y:.2f}万<extra></extra>'
+                ))
+                
+                # 添加补金点（更美观的标记）
+                if not inj_events.empty:
+                    fig4.add_trace(go.Scatter(
+                        x=inj_events['Date'], 
+                        y=inj_events['Account_Equity']/10000,
+                        mode='markers+text',
+                        name='补金事件',
+                        marker=dict(
+                            color='#F24236',
+                            symbol='triangle-up',
+                            size=16,
+                            line=dict(color='white', width=2)
+                        ),
+                        text=[f"+{amt/10000:.1f}" for amt in inj_events['Cash_Injection']],
+                        textposition="top center",
+                        textfont=dict(color='#F24236', size=10, family='Arial Black'),
+                        hovertemplate='<b>补金事件</b><br>时间: %{x}<br>权益: %{y:.1f}万<br>补金: +%{text}万<extra></extra>'
+                    ))
+                
+                # 添加提盈点（更美观的标记）
+                if not wit_events.empty:
+                    fig4.add_trace(go.Scatter(
+                        x=wit_events['Date'], 
+                        y=wit_events['Account_Equity']/10000,
+                        mode='markers+text',
+                        name='提盈事件',
+                        marker=dict(
+                            color='#4CAF50',
+                            symbol='triangle-down',
+                            size=16,
+                            line=dict(color='white', width=2)
+                        ),
+                        text=[f"-{amt/10000:.1f}" for amt in wit_events['Cash_Withdrawal']],
+                        textposition="bottom center",
+                        textfont=dict(color='#4CAF50', size=10, family='Arial Black'),
+                        hovertemplate='<b>提盈事件</b><br>时间: %{x}<br>权益: %{y:.1f}万<br>提盈: -%{text}万<extra></extra>'
+                    ))
+                
+                # 添加资金调度统计
+                total_injections = inj_events['Cash_Injection'].sum()/10000
+                total_withdrawals = wit_events['Cash_Withdrawal'].sum()/10000
+                
+                fig4.add_annotation(
+                    x=0.98, y=0.02,
+                    xref="paper", yref="paper",
+                    text=(
+                        f"<b>资金调度统计</b><br>"
+                        f"补金次数: <span style='color:#F24236'>{len(inj_events)}次</span><br>"
+                        f"提盈次数: <span style='color:#4CAF50'>{len(wit_events)}次</span><br>"
+                        f"净流出: <b>{(total_withdrawals-total_injections):.1f}万</b>"
+                    ),
+                    showarrow=False,
+                    align="right",
+                    bordercolor="gray",
+                    borderwidth=1,
+                    borderpad=6,
+                    bgcolor="white",
+                    opacity=0.9,
+                    font=dict(size=11)
+                )
+                
+                fig4.update_layout(
+                    title="资金通道监管 - 账户权益与资金调度",
+                    template="plotly_white",
+                    height=500,
+                    hovermode="x unified",
+                    yaxis=dict(title="金额 (万元)"),
+                    xaxis=dict(title="时间"),
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    plot_bgcolor='white',
+                    paper_bgcolor='white',
+                    margin=dict(t=50, b=50, l=50, r=50)
+                )
+                
                 st.plotly_chart(fig4, use_container_width=True)
                 
-                # 资金调度详情表格
+                # 资金调度详情表格（现代化设计）
                 if not inj_events.empty or not wit_events.empty:
                     st.subheader("📋 资金调度明细")
+                    
+                    # 创建数据表格
                     event_data = []
                     
                     for idx, row in inj_events.iterrows():
                         event_data.append({
                             '时间': row['Date'],
-                            '类型': '补金',
-                            '金额(万)': row['Cash_Injection']/10000,
-                            '账户权益(万)': row['Account_Equity']/10000,
+                            '类型': '🔴 补金',
+                            '金额(万)': f"+{row['Cash_Injection']/10000:.2f}",
+                            '账户权益(万)': f"{row['Account_Equity']/10000:.2f}",
                             '触发原因': '账户权益低于补金警戒线'
                         })
                     
                     for idx, row in wit_events.iterrows():
                         event_data.append({
                             '时间': row['Date'],
-                            '类型': '提盈',
-                            '金额(万)': row['Cash_Withdrawal']/10000,
-                            '账户权益(万)': row['Account_Equity']/10000,
+                            '类型': '🟢 提盈',
+                            '金额(万)': f"-{row['Cash_Withdrawal']/10000:.2f}",
+                            '账户权益(万)': f"{row['Account_Equity']/10000:.2f}",
                             '触发原因': '账户权益高于提盈触发线'
                         })
                     
                     if event_data:
-                        event_df = pd.DataFrame(event_data).sort_values('时间')
-                        st.dataframe(event_df, use_container_width=True)
+                        event_df = pd.DataFrame(event_data).sort_values('时间', ascending=False)
+                        
+                        # 使用st.dataframe的样式功能
+                        st.dataframe(
+                            event_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                '时间': st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm"),
+                                '类型': st.column_config.TextColumn(width="small"),
+                                '金额(万)': st.column_config.TextColumn(width="small"),
+                                '账户权益(万)': st.column_config.NumberColumn(format="%.2f"),
+                                '触发原因': st.column_config.TextColumn(width="medium")
+                            }
+                        )
 
             # --- 原版摘要分析文本 ---
             st.markdown("---")
             st.subheader("📝 稳定性分析结论")
-            sc1, sc2 = st.columns(2)
-            with sc1:
-                st.write(f"✅ **风险对冲质量**：通过套保，资产净值的波动幅度被压制在了现货波动的 **{100-stability_boost:.1f}%** 范围内。")
-                st.write(f"✅ **极端生存能力**：在回测期内最不利的价格波动下，套保方案成功挽救了约 **{loss_saved:.2f} 万元** 的潜在损失。")
-            with sc2:
-                st.write(f"✅ **资金运营频率**：系统平均每 **{len(df)/(len(inj_events)+len(wit_events)+1):.1f}** 天触发一次资金调度，操作频率处于合理区间。")
-                st.write(f"✅ **收益确定性**：套保后的盈亏分布明显向中心靠拢，大幅降低了企业经营的的'意外'风险。")
+            
+            # 使用卡片式布局
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); 
+                            border-radius: 10px; padding: 20px; margin-bottom: 20px; 
+                            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <h4 style="color: #1565C0; margin-top: 0;">✅ 风险对冲质量</h4>
+                    <p>通过套期保值策略，资产净值的波动幅度被压制在了现货波动的 <b>{:.1f}%</b> 范围内，风险控制效果显著。</p>
+                    
+                    <h4 style="color: #1565C0;">✅ 极端生存能力</h4>
+                    <p>在回测期内最不利的价格波动下，套保方案成功挽救了约 <b>{:.2f} 万元</b> 的潜在损失，增强了企业的抗风险能力。</p>
+                </div>
+                """.format(100-stability_boost, loss_saved), unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%); 
+                            border-radius: 10px; padding: 20px; margin-bottom: 20px; 
+                            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <h4 style="color: #2E7D32; margin-top: 0;">✅ 资金运营效率</h4>
+                    <p>系统平均每 <b>{:.1f}</b> 天触发一次资金调度，操作频率合理，资金使用效率良好。</p>
+                    
+                    <h4 style="color: #2E7D32;">✅ 收益确定性增强</h4>
+                    <p>套保后的盈亏分布明显向中心靠拢，大幅降低了企业经营的'意外'风险，提升了收益的确定性。</p>
+                </div>
+                """.format(len(df)/(len(inj_events)+len(wit_events)+1)), unsafe_allow_html=True)
 
+            # 下载按钮美化
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='回测数据')
-                # 添加资金调度明细
                 if 'event_df' in locals():
                     event_df.to_excel(writer, index=False, sheet_name='资金调度明细')
-            st.download_button("📥 下载完整回测数据", data=output.getvalue(), file_name='套保回测报告.xlsx')
+            
+            st.markdown("""
+            <style>
+            .stDownloadButton button {
+                background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-weight: bold;
+                transition: all 0.3s ease;
+            }
+            .stDownloadButton button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            st.download_button(
+                "📥 下载完整回测数据报告",
+                data=output.getvalue(),
+                file_name='套期保值回测报告.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
 else:
     st.info("👆 请上传 CSV 数据文件开启系统分析。")
 
