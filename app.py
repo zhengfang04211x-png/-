@@ -6,7 +6,7 @@ import plotly.figure_factory as ff
 import io
 
 # ==============================================================================
-# 1. 🎨 页面配置 (移除隐藏 header 的代码，保住侧边栏箭头)
+# 1. 🎨 页面配置 (图表放大 + 侧边栏常驻)
 # ==============================================================================
 st.set_page_config(
     page_title="套期保值稳定性回测系统",
@@ -21,7 +21,6 @@ st.markdown("""
     footer {visibility: hidden;}
     .viewerBadge_container__1QSob {display: none;}
     #stDecoration {display:none;}
-    /* 极致利用屏幕宽度 */
     .block-container {padding-top: 1rem; padding-bottom: 1rem; max-width: 95%;}
     </style>
 """, unsafe_allow_html=True)
@@ -34,7 +33,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("1. 上传 CSV 文件", type=['csv'])
     
     st.subheader("🏭 2. 规模设定")
-    multiplier = st.number_input("合约乘数 (吨/手)", value=10, step=1)
+    multiplier = st.number_input("合约乘数 (单位/手)", value=10, step=1)
     lots = st.number_input("下单手数", value=3, step=1)
     quantity = lots * multiplier 
     
@@ -49,11 +48,21 @@ with st.sidebar:
     holding_days = st.slider("持仓天数", 7, 90, 30)
 
 # ==============================================================================
-# 3. 🧠 计算核心 (完全保留逻辑)
+# 3. 🧠 计算核心 (增加强制数据转换)
 # ==============================================================================
 @st.cache_data
 def process_data(df_input, q, ratio, m_rate, inject_r, withdraw_r, days):
     df = df_input.copy().reset_index(drop=True)
+    
+    # --- 💡 核心修复：确保数据全是数字，处理逗号和空值 ---
+    for col in ['Spot', 'Futures']:
+        if df[col].dtype == 'object':
+            df[col] = df[col].str.replace(',', '').str.strip()
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # 填充空值防止计算中断
+    df = df.ffill().bfill()
+
     df['Basis'] = df['Spot'] - df['Futures']
     df['Cycle_PnL_NoHedge'] = df['Spot'].diff(days) * q
     df['Cycle_Futures_PnL'] = -(df['Futures'].diff(days)) * q * ratio
@@ -105,8 +114,12 @@ if uploaded_file:
     col_fut = next((c for c in raw_df.columns if '期货' in c or '主力' in c), None)
 
     if col_time and col_spot and col_fut:
+        # 重命名并初步清洗列名
         raw_df = raw_df.rename(columns={col_time: 'Date', col_spot: 'Spot', col_fut: 'Futures'})
         raw_df['Date'] = pd.to_datetime(raw_df['Date'])
+        raw_df = raw_df.sort_values('Date').reset_index(drop=True)
+        
+        # 执行计算
         df = process_data(raw_df, quantity, hedge_ratio, margin_rate, inject_ratio, withdraw_ratio, holding_days)
 
         # 1. 核心指标
@@ -117,10 +130,8 @@ if uploaded_file:
         c3.metric("调仓净额", f"{(df['Cash_Withdrawal'].sum()-df['Cash_Injection'].sum())/10000:.2f}万")
         c4.metric("风险挽回", f"{(df['Value_Change_Hedged'].min()-df['Value_Change_NoHedge'].min())/10000:.2f}万")
 
-        # 2. 放大版图表
-        # 设置统一的大尺寸高度
+        # 2. 放大版图表 (Height=650)
         CHART_HEIGHT = 650 
-
         t1, t2, t3, t4 = st.tabs(["📉 价格基差", "🛡️ 对冲波动", "📊 密度分布", "🏦 资金监控"])
 
         with t1:
@@ -139,7 +150,6 @@ if uploaded_file:
             st.plotly_chart(fig2, use_container_width=True)
 
         with t3:
-            # 🚀 密度图放大版
             d1 = df['Cycle_PnL_NoHedge'].dropna()/10000
             d2 = df['Cycle_PnL_Hedge'].dropna()/10000
             fig3 = ff.create_distplot([d1, d2], ['未套保', '套保后'], show_rug=False, colors=['red', 'green'], bin_size=0.5)
@@ -147,20 +157,17 @@ if uploaded_file:
             st.plotly_chart(fig3, use_container_width=True)
 
         with t4:
-            # 🚀 资金通道放大版 + 动作点
             fig4 = go.Figure()
             fig4.add_trace(go.Scatter(x=df['Date'], y=df['Line_Withdraw']/10000, name='提盈线', line=dict(dash='dot', color='blue'), opacity=0.2))
             fig4.add_trace(go.Scatter(x=df['Date'], y=df['Line_Inject']/10000, name='补金线', line=dict(dash='dot', color='red'), opacity=0.2))
             fig4.add_trace(go.Scatter(x=df['Date'], y=df['Account_Equity']/10000, name='权益', line=dict(color='black', width=2)))
-            # 标记动作
-            inj = df[df['Cash_Injection']>0]
-            wit = df[df['Cash_Withdrawal']>0]
+            inj, wit = df[df['Cash_Injection']>0], df[df['Cash_Withdrawal']>0]
             fig4.add_trace(go.Scatter(x=inj['Date'], y=inj['Account_Equity']/10000, mode='markers', name='补仓', marker=dict(color='red', symbol='triangle-up', size=14)))
             fig4.add_trace(go.Scatter(x=wit['Date'], y=wit['Account_Equity']/10000, mode='markers', name='出金', marker=dict(color='blue', symbol='triangle-down', size=14)))
             fig4.update_layout(height=CHART_HEIGHT, hovermode="x unified")
             st.plotly_chart(fig4, use_container_width=True)
 
-        # 3. 分析结论
+        # 3. 结论输出
         st.markdown("---")
         st.subheader("📝 稳定性分析结论")
         sc1, sc2 = st.columns(2)
@@ -169,9 +176,17 @@ if uploaded_file:
             st.write(f"✅ **生存能力**：极端情况下挽救了约 **{loss_saved:.2f} 万元**。")
         with sc2:
             st.write(f"✅ **调仓频率**：平均每 **{len(df)/(len(inj)+len(wit)+1):.1f}** 天操作一次。")
-            st.write(f"✅ **确定性**：套保后盈亏分布（见标签3）显著收拢。")
+            st.write(f"✅ **确定性**：套保后盈亏分布显著向中心轴收拢。")
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        st.download_button("📥 导出报表", data=output.getvalue(), file_name='Backtest_Report.xlsx')
+    else:
+        st.error("数据表头缺失：请确保包含‘时间’、‘现货’、‘期货’字样")
 else:
-    st.info("👋 请上传 CSV 文件。")
+    st.info("👋 请在左侧上传 CSV 文件开启深度分析。")
+
 
 
 
